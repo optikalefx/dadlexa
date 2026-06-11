@@ -52,6 +52,8 @@ Create `arduino_secrets.h` locally. It is ignored by git.
 - Speaker codec: ES8311 at `0x18`
 - Mic codec: ES7210 at `0x40`
 - Speaker amp enable: TCA9555 at `0x20`, port 1 bit 0
+- K1 button: TCA9555 at `0x20`, port 1 bit 1, active low
+- K2 button: TCA9555 at `0x20`, port 1 bit 2, active low
 - Wake model partition is flashed at `0x310000`
 
 ## Build Notes

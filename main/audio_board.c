@@ -19,9 +19,12 @@
 #define I2S_PORT I2S_NUM_0
 #define MCLK_MULTIPLE I2S_MCLK_MULTIPLE_256
 #define TCA9555_ADDR 0x20
+#define TCA9555_INPUT_PORT_1 0x01
 #define TCA9555_OUTPUT_PORT_1 0x03
 #define TCA9555_CONFIG_PORT_1 0x07
 #define SPEAKER_PA_BIT 0
+#define KEY1_BIT 1
+#define KEY2_BIT 2
 #define WAV_HEADER_BYTES 44
 
 static const char *TAG = "audio_board";
@@ -538,6 +541,26 @@ esp_err_t audio_board_write_pcm(const int16_t *pcm, size_t samples)
     ESP_RETURN_ON_FALSE(esp_codec_dev_write(speaker_codec, (void *)pcm,
                                             samples * sizeof(int16_t)) == ESP_CODEC_DEV_OK,
                         ESP_FAIL, TAG, "pcm write");
+    return ESP_OK;
+}
+
+esp_err_t audio_board_read_k1(bool *pressed)
+{
+    ESP_RETURN_ON_FALSE(pressed, ESP_ERR_INVALID_ARG, TAG, "pressed missing");
+
+    uint8_t input = 0xff;
+    ESP_RETURN_ON_ERROR(tca_read(TCA9555_INPUT_PORT_1, &input), TAG, "key input read");
+    *pressed = (input & (1U << KEY1_BIT)) == 0;
+    return ESP_OK;
+}
+
+esp_err_t audio_board_read_k2(bool *pressed)
+{
+    ESP_RETURN_ON_FALSE(pressed, ESP_ERR_INVALID_ARG, TAG, "pressed missing");
+
+    uint8_t input = 0xff;
+    ESP_RETURN_ON_ERROR(tca_read(TCA9555_INPUT_PORT_1, &input), TAG, "key input read");
+    *pressed = (input & (1U << KEY2_BIT)) == 0;
     return ESP_OK;
 }
 

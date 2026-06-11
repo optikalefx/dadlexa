@@ -20,6 +20,7 @@ void app_main(void)
     }
 
     ESP_ERROR_CHECK(audio_board_init());
+    ESP_ERROR_CHECK(voice_flow_start_button_task());
     ESP_ERROR_CHECK(wake_word_init());
     ESP_LOGI(TAG, "ready for wake word");
 

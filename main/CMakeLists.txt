@@ -5,6 +5,7 @@ idf_component_register(
         "audio_board.c"
         "led_ring.c"
         "micro_opus_player.cpp"
+        "ogg_opus_encoder.c"
         "telegram_service.c"
         "voice_flow.c"
         "wake_word.c"

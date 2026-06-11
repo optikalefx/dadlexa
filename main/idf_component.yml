@@ -2,4 +2,5 @@ dependencies:
   idf:
     version: ">=5.0.0"
   espressif/esp_codec_dev: "^1.3.4"
-  esphome/micro-opus: "0.3.4"
+  espressif/esp_muxer: "^1.2.2"
+  esphome/micro-opus: "^0.4.0"

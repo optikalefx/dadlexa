@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 #include "led_ring.h"
 #include "micro_opus_player.h"
+#include "ogg_opus_encoder.h"
 #include "telegram_service.h"
 
 static const char *TAG = "voice_flow";
@@ -77,7 +78,16 @@ static void upload_and_poll_task(void *arg)
     }
 
     start_chase(&chase, "upload_led", 0, 255, 0);
-    esp_err_t sent = telegram_send_audio(&job->audio, "Recorded audio");
+    ogg_opus_audio_t opus = {0};
+    esp_err_t sent = ESP_FAIL;
+    if (ogg_opus_encode_recording(&job->audio, &opus) == ESP_OK) {
+        sent = telegram_send_voice_ogg(opus.data, opus.size, "Recorded audio");
+        ogg_opus_release(&opus);
+    }
+    if (sent != ESP_OK) {
+        ESP_LOGW(TAG, "Opus upload failed; falling back to WAV");
+        sent = telegram_send_audio(&job->audio, "Recorded audio");
+    }
     stop_chase(&chase);
     audio_board_release_recording(&job->audio);
     if (sent != ESP_OK) {
@@ -151,7 +161,7 @@ void voice_flow_handle_wake(void)
     job->audio = audio;
 
     TaskHandle_t task = NULL;
-    if (xTaskCreatePinnedToCore(upload_and_poll_task, "upload_poll", 12288, job, 4, &task, 0) !=
+    if (xTaskCreatePinnedToCore(upload_and_poll_task, "upload_poll", 24576, job, 4, &task, 0) !=
         pdPASS) {
         audio_board_release_recording(&job->audio);
         free(job);

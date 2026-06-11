@@ -33,6 +33,7 @@ static i2c_master_dev_handle_t tca_handle;
 static esp_codec_dev_handle_t speaker_codec;
 static esp_codec_dev_handle_t mic_codec;
 static int current_sample_rate;
+static bool i2s_channels_enabled;
 static bool speaker_open;
 static bool mic_open;
 static SemaphoreHandle_t audio_mutex;
@@ -139,6 +140,7 @@ static esp_err_t init_i2s(int sample_rate)
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(rx_handle, &std_cfg), TAG, "rx std");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(tx_handle), TAG, "enable tx");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(rx_handle), TAG, "enable rx");
+    i2s_channels_enabled = true;
     current_sample_rate = sample_rate;
     return ESP_OK;
 }
@@ -259,6 +261,7 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
     if (current_sample_rate == sample_rate) {
         return ESP_OK;
     }
+    bool codec_close_should_disable_channels = speaker_open || mic_open;
     if (speaker_open) {
         esp_codec_dev_close(speaker_codec);
         speaker_open = false;
@@ -268,12 +271,28 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
         mic_open = false;
     }
 
+    if (codec_close_should_disable_channels) {
+        i2s_channels_enabled = false;
+    }
+    if (i2s_channels_enabled) {
+        esp_err_t err = i2s_channel_disable(tx_handle);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_RETURN_ON_ERROR(err, TAG, "disable tx");
+        }
+        err = i2s_channel_disable(rx_handle);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_RETURN_ON_ERROR(err, TAG, "disable rx");
+        }
+        i2s_channels_enabled = false;
+    }
+
     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
     clk_cfg.mclk_multiple = MCLK_MULTIPLE;
     ESP_RETURN_ON_ERROR(i2s_channel_reconfig_std_clock(tx_handle, &clk_cfg), TAG, "tx clock");
     ESP_RETURN_ON_ERROR(i2s_channel_reconfig_std_clock(rx_handle, &clk_cfg), TAG, "rx clock");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(tx_handle), TAG, "enable tx");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(rx_handle), TAG, "enable rx");
+    i2s_channels_enabled = true;
     current_sample_rate = sample_rate;
     return ESP_OK;
 }

@@ -166,12 +166,15 @@ esp_err_t telegram_send_message(const char *message)
     return err;
 }
 
-esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption)
+static esp_err_t telegram_send_multipart_file(const char *method, const char *field_name,
+                                              const char *filename, const char *content_type,
+                                              const uint8_t *data, size_t data_size,
+                                              const char *caption)
 {
-    ESP_RETURN_ON_FALSE(audio && audio->ok && audio->wav && audio->wav_size, ESP_ERR_INVALID_ARG,
-                        TAG, "invalid audio");
+    ESP_RETURN_ON_FALSE(method && field_name && filename && content_type && data && data_size,
+                        ESP_ERR_INVALID_ARG, TAG, "invalid upload");
 
-    char *url = make_bot_url("sendAudio");
+    char *url = make_bot_url(method);
     ESP_RETURN_ON_FALSE(url, ESP_ERR_NO_MEM, TAG, "url alloc");
 
     const char *boundary = "----JacobSmartSpeakerBoundary";
@@ -188,17 +191,17 @@ esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption
                  boundary, caption);
     }
 
-    char audio_header[192];
-    snprintf(audio_header, sizeof(audio_header),
-             "--%s\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"recording.wav\"\r\n"
-             "Content-Type: audio/wav\r\n\r\n",
-             boundary);
+    char file_header[256];
+    snprintf(file_header, sizeof(file_header),
+             "--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
+             "Content-Type: %s\r\n\r\n",
+             boundary, field_name, filename, content_type);
 
     char closing[64];
     snprintf(closing, sizeof(closing), "\r\n--%s--\r\n", boundary);
 
-    int content_len = strlen(chat_part) + strlen(caption_part) + strlen(audio_header) +
-                      audio->wav_size + strlen(closing);
+    int content_len = strlen(chat_part) + strlen(caption_part) + strlen(file_header) +
+                      data_size + strlen(closing);
 
     esp_http_client_config_t http_cfg = {
         .url = url,
@@ -209,18 +212,19 @@ esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption
     free(url);
     ESP_RETURN_ON_FALSE(client, ESP_FAIL, TAG, "audio http init");
 
-    char content_type[96];
-    snprintf(content_type, sizeof(content_type), "multipart/form-data; boundary=%s", boundary);
+    char multipart_content_type[96];
+    snprintf(multipart_content_type, sizeof(multipart_content_type),
+             "multipart/form-data; boundary=%s", boundary);
     esp_http_client_set_method(client, HTTP_METHOD_POST);
-    esp_http_client_set_header(client, "Content-Type", content_type);
+    esp_http_client_set_header(client, "Content-Type", multipart_content_type);
     esp_err_t err = esp_http_client_open(client, content_len);
     if (err == ESP_OK) {
         esp_http_client_write(client, chat_part, strlen(chat_part));
         if (caption_part[0]) {
             esp_http_client_write(client, caption_part, strlen(caption_part));
         }
-        esp_http_client_write(client, audio_header, strlen(audio_header));
-        esp_http_client_write(client, (const char *)audio->wav, audio->wav_size);
+        esp_http_client_write(client, file_header, strlen(file_header));
+        esp_http_client_write(client, (const char *)data, data_size);
         esp_http_client_write(client, closing, strlen(closing));
         esp_http_client_fetch_headers(client);
         int status = esp_http_client_get_status_code(client);
@@ -231,6 +235,20 @@ esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
     return err;
+}
+
+esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption)
+{
+    ESP_RETURN_ON_FALSE(audio && audio->ok && audio->wav && audio->wav_size, ESP_ERR_INVALID_ARG,
+                        TAG, "invalid audio");
+    return telegram_send_multipart_file("sendAudio", "audio", "recording.wav", "audio/wav",
+                                        audio->wav, audio->wav_size, caption);
+}
+
+esp_err_t telegram_send_voice_ogg(const uint8_t *ogg, size_t ogg_size, const char *caption)
+{
+    return telegram_send_multipart_file("sendVoice", "voice", "recording.ogg", "audio/ogg",
+                                        ogg, ogg_size, caption);
 }
 
 static int64_t max_update_id(cJSON *root)

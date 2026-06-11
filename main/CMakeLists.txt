@@ -1,7 +1,6 @@
 idf_component_register(
     SRCS
         "main.c"
-        "app_controller.c"
         "app_config.c"
         "audio_board.c"
         "led_ring.c"

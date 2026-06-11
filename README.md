@@ -21,8 +21,7 @@ Native ESP-IDF firmware for the Waveshare ESP32-S3 smart speaker board.
 
 ## Source Layout
 
-- `main/main.c` - ESP-IDF entry point only.
-- `main/app_controller.*` - app startup and main wake loop.
+- `main/main.c` - ESP-IDF entry point, app startup, and main wake loop.
 - `main/app_config.*` - board constants and local secrets bridge.
 - `main/audio_board.*` - ES8311/ES7210 codec setup, I2S, tones, recording, playback mode switching.
 - `main/led_ring.*` - WS2812 LED ring driver and status helpers.

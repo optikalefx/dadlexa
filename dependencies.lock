@@ -1,0 +1,54 @@
+dependencies:
+  esphome/micro-opus:
+    component_hash: 66b6bd15e1f855d59d14b3e11c2edee131551e32c107fc23f0660e273c1353c0
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.3.4
+  espressif/dl_fft:
+    component_hash: ced3cf28cc70452b7859c06f4e5059215167254a2047e34c893d6f501ccd6ea2
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.0
+  espressif/esp-dsp:
+    component_hash: 619639efc18cfa361a9e423739b9b0ffc14991effc6c027f955c2f2c3bf1754b
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.6.0
+  espressif/esp_codec_dev:
+    component_hash: 896c67360ae1f8dedaf8a53dfe48c015317fa455f061a5165307892296990028
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.5.10
+  idf:
+    source:
+      type: idf
+    version: 5.5.0
+direct_dependencies:
+- esphome/micro-opus
+- espressif/dl_fft
+- espressif/esp-dsp
+- espressif/esp_codec_dev
+- idf
+manifest_hash: 8eac25ab9917c6e04cbd089a3ca51900e4e8468d63f6529a1cda938bf366f341
+target: esp32s3
+version: 2.0.0

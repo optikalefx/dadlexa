@@ -1,0 +1,25 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "app_controller.c"
+        "app_config.c"
+        "audio_board.c"
+        "led_ring.c"
+        "micro_opus_player.cpp"
+        "telegram_service.c"
+        "voice_flow.c"
+        "wake_word.c"
+        "wifi_service.c"
+    INCLUDE_DIRS "." ".."
+    REQUIRES
+        driver
+        esp-sr
+        esp_codec_dev
+        esp_http_client
+        esp_timer
+        esp_wifi
+        json
+        mbedtls
+        nvs_flash
+        esphome__micro-opus
+)

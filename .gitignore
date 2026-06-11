@@ -1,1 +1,6 @@
 arduino_secrets.h
+idf-tests/.esp-adf/
+build*/
+managed_components/
+sdkconfig
+sdkconfig.old

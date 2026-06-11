@@ -14,9 +14,22 @@
 
 static const char *TAG = "opus_player";
 
-extern "C" esp_err_t play_micro_opus_ogg(const uint8_t *ogg_data, size_t ogg_size)
+static int16_t clamp_i16(float sample)
+{
+    if (sample > 32767.0f) {
+        return 32767;
+    }
+    if (sample < -32768.0f) {
+        return -32768;
+    }
+    return static_cast<int16_t>(sample);
+}
+
+extern "C" esp_err_t play_micro_opus_ogg_with_gain(const uint8_t *ogg_data, size_t ogg_size,
+                                                    float gain)
 {
     ESP_RETURN_ON_FALSE(ogg_data && ogg_size > 0, ESP_ERR_INVALID_ARG, TAG, "empty ogg");
+    ESP_RETURN_ON_FALSE(gain > 0.0f, ESP_ERR_INVALID_ARG, TAG, "invalid gain");
 
     micro_opus::OggOpusDecoder decoder(false, 48000, 1);
     std::vector<int16_t> pcm_buffer(960);
@@ -49,6 +62,11 @@ extern "C" esp_err_t play_micro_opus_ogg(const uint8_t *ogg_data, size_t ogg_siz
                 channels = 1;
             }
             size_t samples = decoded * channels;
+            if (gain != 1.0f) {
+                for (size_t i = 0; i < samples; i++) {
+                    pcm_buffer[i] = clamp_i16(static_cast<float>(pcm_buffer[i]) * gain);
+                }
+            }
             ESP_RETURN_ON_ERROR(audio_board_write_pcm(pcm_buffer.data(), samples), TAG, "pcm write");
             total_pcm += samples;
         }
@@ -57,4 +75,9 @@ extern "C" esp_err_t play_micro_opus_ogg(const uint8_t *ogg_data, size_t ogg_siz
     }
 
     return total_pcm > 0 ? ESP_OK : ESP_FAIL;
+}
+
+extern "C" esp_err_t play_micro_opus_ogg(const uint8_t *ogg_data, size_t ogg_size)
+{
+    return play_micro_opus_ogg_with_gain(ogg_data, ogg_size, 1.0f);
 }

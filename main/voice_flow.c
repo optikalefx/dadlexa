@@ -26,6 +26,7 @@ static const char *TAG = "voice_flow";
 #define CHASE_STEP_MS 140
 #define BUTTON_POLL_MS 50
 #define BUTTON_DEBOUNCE_MS 250
+#define SENT_PLAYBACK_GAIN 4.0f
 
 typedef struct {
     recorded_audio_t audio;
@@ -154,7 +155,8 @@ static esp_err_t play_last_sent_from_ram(void)
     esp_err_t err = audio_board_prepare_playback_48k();
     if (err == ESP_OK) {
         led_ring_flash(0, 180, 255, 80, 40, 1);
-        err = play_micro_opus_ogg(last_sent_ogg, last_sent_ogg_size);
+        err = play_micro_opus_ogg_with_gain(last_sent_ogg, last_sent_ogg_size,
+                                            SENT_PLAYBACK_GAIN);
         ESP_LOGI(TAG, "cached sent playback %s", err == ESP_OK ? "ok" : "failed");
     }
     audio_board_prepare_recording();

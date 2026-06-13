@@ -237,14 +237,6 @@ static esp_err_t telegram_send_multipart_file(const char *method, const char *fi
     return err;
 }
 
-esp_err_t telegram_send_audio(const recorded_audio_t *audio, const char *caption)
-{
-    ESP_RETURN_ON_FALSE(audio && audio->ok && audio->wav && audio->wav_size, ESP_ERR_INVALID_ARG,
-                        TAG, "invalid audio");
-    return telegram_send_multipart_file("sendAudio", "audio", "recording.wav", "audio/wav",
-                                        audio->wav, audio->wav_size, caption);
-}
-
 esp_err_t telegram_send_voice_ogg(const uint8_t *ogg, size_t ogg_size, const char *caption)
 {
     return telegram_send_multipart_file("sendVoice", "voice", "recording.ogg", "audio/ogg",

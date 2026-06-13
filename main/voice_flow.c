@@ -236,8 +236,7 @@ static void upload_and_poll_task(void *arg)
         ogg_opus_release(&opus);
     }
     if (sent != ESP_OK) {
-        ESP_LOGW(TAG, "Opus upload failed; falling back to WAV");
-        sent = telegram_send_audio(&job->audio, "Recorded audio");
+        ESP_LOGW(TAG, "Opus upload failed");
     }
     stop_chase(&chase);
     audio_board_release_recording(&job->audio);

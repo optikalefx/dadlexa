@@ -13,6 +13,8 @@ static const char *TAG = "led_ring";
 static led_strip_handle_t led_strip;
 static uint8_t chase_index;
 
+/* Data preparation helper: applies the configured brightness limit before RGB
+ * values are sent to the LED hardware. */
 static void scale_color(uint8_t *red, uint8_t *green, uint8_t *blue)
 {
     *red = (uint8_t)(((uint16_t)*red * LED_BRIGHTNESS) / 255);
@@ -20,12 +22,16 @@ static void scale_color(uint8_t *red, uint8_t *green, uint8_t *blue)
     *blue = (uint8_t)(((uint16_t)*blue * LED_BRIGHTNESS) / 255);
 }
 
+/* LED hardware boundary: flushes the currently prepared pixel buffer to the
+ * WS2812 ring through the RMT-backed led_strip driver. */
 static esp_err_t show(void)
 {
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
     return led_strip_refresh(led_strip);
 }
 
+/* LED hardware boundary: creates the RMT LED-strip device attached to the
+ * configured LED GPIO and leaves the ring cleared. */
 esp_err_t led_ring_init(void)
 {
     if (led_strip) {
@@ -48,6 +54,7 @@ esp_err_t led_ring_init(void)
     return led_ring_clear();
 }
 
+/* LED hardware boundary: turns every LED off and refreshes the physical ring. */
 esp_err_t led_ring_clear(void)
 {
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
@@ -57,6 +64,8 @@ esp_err_t led_ring_clear(void)
     return show();
 }
 
+/* LED hardware boundary: fills the entire physical ring with one scaled color
+ * for user-visible status. */
 esp_err_t led_ring_set(uint8_t red, uint8_t green, uint8_t blue)
 {
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
@@ -69,6 +78,8 @@ esp_err_t led_ring_set(uint8_t red, uint8_t green, uint8_t blue)
     return show();
 }
 
+/* LED hardware boundary: blocks while blinking the physical ring as a short
+ * status/error cue. */
 esp_err_t led_ring_flash(uint8_t red, uint8_t green, uint8_t blue, uint32_t on_ms,
                          uint32_t off_ms, uint8_t count)
 {
@@ -83,6 +94,8 @@ esp_err_t led_ring_flash(uint8_t red, uint8_t green, uint8_t blue, uint32_t on_m
     return ESP_OK;
 }
 
+/* LED hardware boundary: advances one lit pixel around the ring for async
+ * upload/polling progress indicators. */
 esp_err_t led_ring_chase_step(uint8_t red, uint8_t green, uint8_t blue)
 {
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");

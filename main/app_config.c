@@ -9,6 +9,8 @@ static const app_config_t config = {
     .telegram_chat_id = TELEGRAM_CHAT_ID,
 };
 
+/* Data/config helper: exposes compile-time secrets and IDs to the services that
+ * actually connect to Wi-Fi or Telegram. */
 const app_config_t *app_config_get(void)
 {
     return &config;

@@ -28,6 +28,8 @@ typedef struct {
     size_t cap;
 } mux_buffer_t;
 
+/* Data preparation helper: grows the heap-backed Ogg output buffer and appends
+ * bytes emitted by the muxer. */
 static esp_err_t append_bytes(mux_buffer_t *buf, const void *data, size_t size)
 {
     if (buf->size + size > buf->cap) {
@@ -48,6 +50,8 @@ static esp_err_t append_bytes(mux_buffer_t *buf, const void *data, size_t size)
     return ESP_OK;
 }
 
+/* Data preparation callback: bridges esp_muxer output into the in-memory buffer
+ * that will later be uploaded to Telegram. */
 static int muxer_data_cb(esp_muxer_data_info_t *data, void *ctx)
 {
     mux_buffer_t *buf = (mux_buffer_t *)ctx;
@@ -57,6 +61,8 @@ static int muxer_data_cb(esp_muxer_data_info_t *data, void *ctx)
     return append_bytes(buf, data->data, data->size) == ESP_OK ? 0 : -1;
 }
 
+/* Data preparation workflow: converts the recorded WAV/PCM buffer into an Ogg
+ * Opus voice payload suitable for Telegram upload. */
 esp_err_t ogg_opus_encode_recording(const recorded_audio_t *recording, ogg_opus_audio_t *out)
 {
     memset(out, 0, sizeof(*out));
@@ -153,6 +159,8 @@ esp_err_t ogg_opus_encode_recording(const recorded_audio_t *recording, ogg_opus_
     return ESP_OK;
 }
 
+/* Data ownership helper: frees an encoded Ogg Opus buffer once it is no longer
+ * needed or has not been retained for replay. */
 void ogg_opus_release(ogg_opus_audio_t *audio)
 {
     if (audio && audio->data) {

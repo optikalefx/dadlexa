@@ -13,7 +13,7 @@ Native ESP-IDF firmware for the Waveshare ESP32-S3 smart speaker board.
   - low beep and blue ring when recording ends
   - starts a background Telegram upload task
 - Background task:
-  - green chase while encoding and uploading Ogg/Opus voice to Telegram
+  - green chase while preparing, encoding, and uploading Ogg/Opus voice to Telegram
   - blue flash after upload is sent
   - yellow chase while polling Telegram for a reply
   - blue flash after a poll with no reply

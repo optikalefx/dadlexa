@@ -47,6 +47,8 @@ static uint8_t *last_sent_ogg;
 static size_t last_sent_ogg_size;
 static bool button_task_started;
 
+/* Coordination helper: lazily creates the mutex protecting cached Telegram reply
+ * and sent-audio buffers. */
 static esp_err_t ensure_audio_cache_mutex(void)
 {
     if (!audio_cache_mutex) {
@@ -55,6 +57,8 @@ static esp_err_t ensure_audio_cache_mutex(void)
     return audio_cache_mutex ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
+/* LED hardware task: runs a repeating chase animation while upload or Telegram
+ * polling work is in progress. */
 static void chase_task(void *arg)
 {
     chase_status_t *status = (chase_status_t *)arg;
@@ -65,6 +69,8 @@ static void chase_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* LED hardware helper: configures chase color/timing and starts the FreeRTOS
+ * task that drives the physical LED ring. */
 static void start_chase(chase_status_t *status, const char *name, uint8_t red, uint8_t green,
                         uint8_t blue)
 {
@@ -78,6 +84,8 @@ static void start_chase(chase_status_t *status, const char *name, uint8_t red, u
     }
 }
 
+/* LED hardware helper: stops a chase task and waits long enough for it to exit
+ * before another status pattern takes over the ring. */
 static void stop_chase(chase_status_t *status)
 {
     if (!status->running) {
@@ -87,6 +95,8 @@ static void stop_chase(chase_status_t *status)
     vTaskDelay(pdMS_TO_TICKS(status->step_ms + 20));
 }
 
+/* Data ownership helper: replaces the cached Telegram reply Ogg buffer so K1 can
+ * replay the latest downloaded response. */
 static esp_err_t retain_last_reply(uint8_t *data, size_t size)
 {
     ESP_RETURN_ON_FALSE(data && size, ESP_ERR_INVALID_ARG, TAG, "invalid reply");
@@ -100,6 +110,8 @@ static esp_err_t retain_last_reply(uint8_t *data, size_t size)
     return ESP_OK;
 }
 
+/* Data ownership helper: replaces the cached outgoing Ogg buffer so K2 can
+ * replay what was last uploaded to Telegram. */
 static esp_err_t retain_last_sent(uint8_t *data, size_t size)
 {
     ESP_RETURN_ON_FALSE(data && size, ESP_ERR_INVALID_ARG, TAG, "invalid sent audio");
@@ -113,6 +125,8 @@ static esp_err_t retain_last_sent(uint8_t *data, size_t size)
     return ESP_OK;
 }
 
+/* Hardware playback helper: replays the cached Telegram reply from RAM through
+ * the speaker path and flashes status LEDs. */
 static esp_err_t play_last_reply_from_ram(void)
 {
     ESP_RETURN_ON_ERROR(ensure_audio_cache_mutex(), TAG, "cache mutex");
@@ -139,6 +153,8 @@ static esp_err_t play_last_reply_from_ram(void)
     return err;
 }
 
+/* Hardware playback helper: replays the most recently uploaded voice recording
+ * from RAM through the speaker path with extra gain. */
 static esp_err_t play_last_sent_from_ram(void)
 {
     ESP_RETURN_ON_ERROR(ensure_audio_cache_mutex(), TAG, "cache mutex");
@@ -166,6 +182,8 @@ static esp_err_t play_last_sent_from_ram(void)
     return err;
 }
 
+/* Hardware input task: polls the physical K1/K2 buttons via audio_board and
+ * routes them to cached reply or sent-audio playback. */
 static void button_task(void *arg)
 {
     (void)arg;
@@ -203,6 +221,8 @@ static void button_task(void *arg)
     }
 }
 
+/* Hardware input boundary: starts the background button polling task once so the
+ * user can replay cached audio without waking the voice flow. */
 esp_err_t voice_flow_start_button_task(void)
 {
     ESP_RETURN_ON_ERROR(ensure_audio_cache_mutex(), TAG, "cache mutex");
@@ -215,17 +235,20 @@ esp_err_t voice_flow_start_button_task(void)
     return ESP_OK;
 }
 
+/* Business-critical Telegram workflow: encodes the recorded WAV to Ogg Opus,
+ * uploads it to Telegram, polls for a reply file, downloads that reply, caches
+ * it, and plays it on the speaker. */
 static void upload_and_poll_task(void *arg)
 {
     upload_job_t *job = (upload_job_t *)arg;
     int64_t offset = 0;
     chase_status_t chase = {0};
 
+    start_chase(&chase, "upload_led", 0, 255, 0);
     if (telegram_get_next_update_offset(&offset) != ESP_OK) {
         ESP_LOGW(TAG, "could not prime Telegram offset; using 0");
     }
 
-    start_chase(&chase, "upload_led", 0, 255, 0);
     ogg_opus_audio_t opus = {0};
     esp_err_t sent = ESP_FAIL;
     if (ogg_opus_encode_recording(&job->audio, &opus) == ESP_OK) {
@@ -278,6 +301,9 @@ static void upload_and_poll_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* Business-critical voice workflow: after wake-word detection, gives audible/LED
+ * cues, records speech from the microphone, and starts the Telegram upload/reply
+ * task if recording succeeded. */
 void voice_flow_handle_wake(void)
 {
     recorded_audio_t audio = {0};
@@ -291,10 +317,10 @@ void voice_flow_handle_wake(void)
     audio_board_unlock();
 
     vTaskDelay(pdMS_TO_TICKS(500));
-    led_ring_clear();
 
     if (err != ESP_OK || !audio.ok) {
         ESP_LOGW(TAG, "recording failed: %s", esp_err_to_name(err));
+        led_ring_clear();
         telegram_send_message("Voice recording failed.");
         return;
     }

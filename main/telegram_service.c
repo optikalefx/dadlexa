@@ -21,6 +21,8 @@ typedef struct {
     size_t max;
 } response_buffer_t;
 
+/* Telegram/API data-prep helper: builds a bot API method URL from the configured
+ * token; the caller performs the actual HTTP request. */
 static char *make_bot_url(const char *method)
 {
     const app_config_t *cfg = app_config_get();
@@ -33,6 +35,8 @@ static char *make_bot_url(const char *method)
     return url;
 }
 
+/* Telegram/API data-prep helper: builds a file-download URL for a Telegram
+ * file_path returned by getFile. */
 static char *make_file_url(const char *path)
 {
     const app_config_t *cfg = app_config_get();
@@ -45,6 +49,8 @@ static char *make_file_url(const char *path)
     return url;
 }
 
+/* Network data-prep helper: grows the HTTP response buffer and appends incoming
+ * bytes without interpreting Telegram JSON yet. */
 static bool append_response(response_buffer_t *buf, const char *data, size_t len)
 {
     if (buf->len + len + 1 > buf->max) {
@@ -71,6 +77,8 @@ static bool append_response(response_buffer_t *buf, const char *data, size_t len
     return true;
 }
 
+/* Telegram/API boundary callback: receives chunks from esp_http_client and
+ * stores them for the higher-level Telegram parser. */
 static esp_err_t http_event(esp_http_client_event_t *evt)
 {
     if (evt->event_id == HTTP_EVENT_ON_DATA && evt->user_data && evt->data_len > 0) {
@@ -82,6 +90,8 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+/* Telegram/API boundary: performs a TLS HTTP GET and collects the response body
+ * for Telegram API calls or Telegram file downloads. */
 static esp_err_t http_get_text(const char *url, response_buffer_t *response)
 {
     esp_http_client_config_t http_cfg = {
@@ -100,6 +110,8 @@ static esp_err_t http_get_text(const char *url, response_buffer_t *response)
     return (status >= 200 && status < 300) ? ESP_OK : ESP_FAIL;
 }
 
+/* Telegram/API data-prep helper: form-encodes text fields before they are sent
+ * to Telegram's application/x-www-form-urlencoded endpoints. */
 static char *url_encode(const char *input)
 {
     size_t len = strlen(input);
@@ -124,6 +136,8 @@ static char *url_encode(const char *input)
     return out;
 }
 
+/* Telegram/API boundary: sends a plain chat message, used for online status and
+ * recording failure notifications. */
 esp_err_t telegram_send_message(const char *message)
 {
     char *url = make_bot_url("sendMessage");
@@ -166,6 +180,8 @@ esp_err_t telegram_send_message(const char *message)
     return err;
 }
 
+/* Telegram/API boundary: streams a multipart upload to Telegram for binary
+ * voice/audio payloads without copying the whole request body. */
 static esp_err_t telegram_send_multipart_file(const char *method, const char *field_name,
                                               const char *filename, const char *content_type,
                                               const uint8_t *data, size_t data_size,
@@ -237,12 +253,16 @@ static esp_err_t telegram_send_multipart_file(const char *method, const char *fi
     return err;
 }
 
+/* Telegram/API boundary: uploads an Ogg Opus recording as a Telegram voice
+ * message to the configured chat. */
 esp_err_t telegram_send_voice_ogg(const uint8_t *ogg, size_t ogg_size, const char *caption)
 {
     return telegram_send_multipart_file("sendVoice", "voice", "recording.ogg", "audio/ogg",
                                         ogg, ogg_size, caption);
 }
 
+/* Telegram/API data-prep helper: scans parsed getUpdates JSON to find the
+ * highest update_id so later polls ignore older messages. */
 static int64_t max_update_id(cJSON *root)
 {
     int64_t max_id = -1;
@@ -257,6 +277,8 @@ static int64_t max_update_id(cJSON *root)
     return max_id;
 }
 
+/* Telegram/API boundary: calls getUpdates once and computes the next offset used
+ * before waiting for a reply to the just-uploaded voice message. */
 esp_err_t telegram_get_next_update_offset(int64_t *offset)
 {
     char *url = make_bot_url("getUpdates?timeout=0");
@@ -275,6 +297,8 @@ esp_err_t telegram_get_next_update_offset(int64_t *offset)
     return ESP_OK;
 }
 
+/* Telegram/API data-prep helper: inspects one update JSON object, verifies it
+ * came from the configured chat, and extracts a reply file_id if present. */
 static bool update_has_reply_file(cJSON *update, char *file_id, size_t file_id_size)
 {
     cJSON *message = cJSON_GetObjectItem(update, "message");
@@ -301,6 +325,8 @@ static bool update_has_reply_file(cJSON *update, char *file_id, size_t file_id_s
     return false;
 }
 
+/* Telegram/API boundary: polls getUpdates and reports the first voice/audio/file
+ * attachment found after the tracked offset. */
 esp_err_t telegram_poll_reply_file(int64_t *offset, char *file_id, size_t file_id_size)
 {
     char method[96];
@@ -334,6 +360,8 @@ esp_err_t telegram_poll_reply_file(int64_t *offset, char *file_id, size_t file_i
     return found ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
+/* Telegram/API boundary: resolves a Telegram file_id to file_path, downloads the
+ * reply bytes over TLS, and returns heap-owned data for playback/cache. */
 esp_err_t telegram_download_file_by_id(const char *file_id, uint8_t **data, size_t *size)
 {
     *data = NULL;

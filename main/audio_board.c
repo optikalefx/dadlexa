@@ -44,12 +44,16 @@ static bool speaker_open;
 static bool mic_open;
 static SemaphoreHandle_t audio_mutex;
 
+/* Data preparation helper: writes a 16-bit integer in WAV little-endian order;
+ * it does not touch the audio hardware. */
 static void write_le16(uint8_t *target, uint16_t value)
 {
     target[0] = value & 0xff;
     target[1] = (value >> 8) & 0xff;
 }
 
+/* Data preparation helper: writes a 32-bit integer in WAV little-endian order;
+ * it is used only when building the recorded-audio buffer. */
 static void write_le32(uint8_t *target, uint32_t value)
 {
     target[0] = value & 0xff;
@@ -58,6 +62,8 @@ static void write_le32(uint8_t *target, uint32_t value)
     target[3] = (value >> 24) & 0xff;
 }
 
+/* Data preparation helper: constructs the in-memory mono 16 kHz WAV header for
+ * audio captured from the microphone. */
 static void write_wav_header(uint8_t *wav, uint32_t data_bytes)
 {
     memcpy(wav, "RIFF", 4);
@@ -75,17 +81,22 @@ static void write_wav_header(uint8_t *wav, uint32_t data_bytes)
     write_le32(wav + 40, data_bytes);
 }
 
+/* Hardware boundary: reads one register from the TCA9555 I/O expander over I2C,
+ * which is how this board exposes amp and button control lines. */
 static esp_err_t tca_read(uint8_t reg, uint8_t *value)
 {
     return i2c_master_transmit_receive(tca_handle, &reg, 1, value, 1, pdMS_TO_TICKS(1000));
 }
 
+/* Hardware boundary: writes one register on the TCA9555 I/O expander over I2C. */
 static esp_err_t tca_write(uint8_t reg, uint8_t value)
 {
     uint8_t payload[2] = {reg, value};
     return i2c_master_transmit(tca_handle, payload, sizeof(payload), pdMS_TO_TICKS(1000));
 }
 
+/* Hardware boundary: configures and drives the expander pin that enables the
+ * speaker power amplifier. */
 static esp_err_t enable_speaker_amp(void)
 {
     uint8_t config = 0xff;
@@ -99,6 +110,8 @@ static esp_err_t enable_speaker_amp(void)
     return tca_write(TCA9555_OUTPUT_PORT_1, output);
 }
 
+/* Hardware boundary: creates the ESP-IDF I2C master bus and attaches the board's
+ * TCA9555 expander device. */
 static esp_err_t init_i2c(void)
 {
     i2c_master_bus_config_t bus_cfg = {
@@ -119,6 +132,8 @@ static esp_err_t init_i2c(void)
     return i2c_master_bus_add_device(i2c_bus, &tca_cfg, &tca_handle);
 }
 
+/* Hardware boundary: creates and enables the shared I2S TX/RX channels used by
+ * both the speaker DAC and microphone ADC codecs. */
 static esp_err_t init_i2s(int sample_rate)
 {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
@@ -151,6 +166,8 @@ static esp_err_t init_i2s(int sample_rate)
     return ESP_OK;
 }
 
+/* Hardware setup helper: wraps the current I2S channels in the codec data
+ * interface expected by the ESP audio codec layer. */
 static const audio_codec_data_if_t *new_i2s_data_if(void)
 {
     audio_codec_i2s_cfg_t i2s_cfg = {
@@ -162,12 +179,16 @@ static const audio_codec_data_if_t *new_i2s_data_if(void)
     return audio_codec_new_i2s_data(&i2s_cfg);
 }
 
+/* Hardware setup helper: wraps an I2C codec address in the control interface
+ * used to configure the speaker or microphone codec chips. */
 static const audio_codec_ctrl_if_t *new_i2c_ctrl_if(uint8_t addr)
 {
     audio_codec_i2c_cfg_t i2c_cfg = {.port = I2C_PORT, .addr = addr, .bus_handle = i2c_bus};
     return audio_codec_new_i2c_ctrl(&i2c_cfg);
 }
 
+/* Hardware boundary: instantiates the ES8311 speaker codec, ES7210 microphone
+ * codec, their bus interfaces, and the external speaker amplifier. */
 static esp_err_t create_codecs(void)
 {
     const audio_codec_ctrl_if_t *speaker_ctrl = new_i2c_ctrl_if(ES8311_CODEC_DEFAULT_ADDR);
@@ -222,6 +243,8 @@ static esp_err_t create_codecs(void)
     return ESP_OK;
 }
 
+/* Hardware boundary: opens/configures the speaker codec for the requested sample
+ * rate, channel count, and output volume. */
 static esp_err_t open_speaker(int sample_rate, int channels)
 {
     if (speaker_open) {
@@ -241,6 +264,8 @@ static esp_err_t open_speaker(int sample_rate, int channels)
     return ESP_OK;
 }
 
+/* Hardware boundary: opens/configures the microphone codec, input gain, and
+ * mute state for recording. */
 static esp_err_t open_mic(int sample_rate)
 {
     if (mic_open) {
@@ -262,12 +287,14 @@ static esp_err_t open_mic(int sample_rate)
     return ESP_OK;
 }
 
+/* Hardware boundary: safely retunes the shared I2S clock, closing codecs first
+ * when the board switches between 16 kHz recording and 48 kHz playback. */
 static esp_err_t reconfig_i2s_clock(int sample_rate)
 {
     if (current_sample_rate == sample_rate) {
         return ESP_OK;
     }
-    bool codec_close_should_disable_channels = speaker_open || mic_open;
+    bool codecs_were_open = speaker_open || mic_open;
     if (speaker_open) {
         esp_codec_dev_close(speaker_codec);
         speaker_open = false;
@@ -276,10 +303,10 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
         esp_codec_dev_close(mic_codec);
         mic_open = false;
     }
-
-    if (codec_close_should_disable_channels) {
+    if (codecs_were_open) {
         i2s_channels_enabled = false;
     }
+
     if (i2s_channels_enabled) {
         esp_err_t err = i2s_channel_disable(tx_handle);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
@@ -303,6 +330,8 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
     return ESP_OK;
 }
 
+/* Hardware boundary: initializes all audio buses, codecs, amplifier control, and
+ * mutex protection, then leaves the board ready to record. */
 esp_err_t audio_board_init(void)
 {
     audio_mutex = xSemaphoreCreateMutex();
@@ -313,16 +342,21 @@ esp_err_t audio_board_init(void)
     return audio_board_prepare_recording();
 }
 
+/* Hardware coordination helper: serializes access to shared audio hardware so
+ * recording, playback, wake-word reads, and button replay do not collide. */
 void audio_board_lock(void)
 {
     xSemaphoreTake(audio_mutex, portMAX_DELAY);
 }
 
+/* Hardware coordination helper: releases the shared audio-hardware lock. */
 void audio_board_unlock(void)
 {
     xSemaphoreGive(audio_mutex);
 }
 
+/* Hardware boundary: switches the codecs and I2S bus into 16 kHz microphone
+ * recording mode while keeping the speaker available for tones. */
 esp_err_t audio_board_prepare_recording(void)
 {
     ESP_RETURN_ON_ERROR(reconfig_i2s_clock(RECORD_SAMPLE_RATE), TAG, "16k clock");
@@ -330,12 +364,16 @@ esp_err_t audio_board_prepare_recording(void)
     return open_mic(RECORD_SAMPLE_RATE);
 }
 
+/* Hardware boundary: switches the speaker path to 48 kHz mono playback for
+ * decoded Telegram replies and cached outgoing audio. */
 esp_err_t audio_board_prepare_playback_48k(void)
 {
     ESP_RETURN_ON_ERROR(reconfig_i2s_clock(PLAYBACK_SAMPLE_RATE), TAG, "48k clock");
     return open_speaker(PLAYBACK_SAMPLE_RATE, 1);
 }
 
+/* Hardware boundary: pulls interleaved stereo PCM frames directly from the
+ * microphone codec. */
 esp_err_t audio_board_read_stereo(int16_t *buffer, size_t frames, uint32_t timeout_ms)
 {
     ESP_RETURN_ON_FALSE(mic_open, ESP_ERR_INVALID_STATE, TAG, "mic closed");
@@ -345,6 +383,8 @@ esp_err_t audio_board_read_stereo(int16_t *buffer, size_t frames, uint32_t timeo
     return ESP_OK;
 }
 
+/* Data preparation helper: limits a floating-point sample back into signed
+ * 16-bit PCM range after software gain is applied. */
 static int16_t clamp_i16(float sample)
 {
     if (sample > 32767.0f) {
@@ -356,6 +396,8 @@ static int16_t clamp_i16(float sample)
     return (int16_t)sample;
 }
 
+/* Hardware plus data-prep boundary: reads stereo microphone samples from the
+ * codec, mixes them down to mono, and applies software gain for wake/recording. */
 esp_err_t audio_board_read_mono_gain(int16_t *buffer, size_t samples, float gain)
 {
     int16_t *stereo = heap_caps_malloc(samples * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -374,6 +416,9 @@ esp_err_t audio_board_read_mono_gain(int16_t *buffer, size_t samples, float gain
     return err;
 }
 
+/* Business-critical hardware workflow: records microphone audio until VAD sees
+ * speech followed by silence, keeps preroll, and returns a WAV buffer plus
+ * metrics for later Telegram upload. */
 esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
 {
     memset(audio, 0, sizeof(*audio));
@@ -499,6 +544,8 @@ cleanup:
     return ESP_OK;
 }
 
+/* Hardware boundary: generates a sine wave and writes it to the speaker codec
+ * for audible wake/done cues. */
 esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms)
 {
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "tone mode");
@@ -525,6 +572,8 @@ esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms)
     return ESP_OK;
 }
 
+/* Hardware boundary: writes caller-provided mono PCM samples to the speaker
+ * codec; decoded playback paths depend on this. */
 esp_err_t audio_board_write_pcm(const int16_t *pcm, size_t samples)
 {
     ESP_RETURN_ON_FALSE(speaker_open, ESP_ERR_INVALID_STATE, TAG, "speaker closed");
@@ -534,6 +583,7 @@ esp_err_t audio_board_write_pcm(const int16_t *pcm, size_t samples)
     return ESP_OK;
 }
 
+/* Hardware boundary: reads the K1 button state through the TCA9555 expander. */
 esp_err_t audio_board_read_k1(bool *pressed)
 {
     ESP_RETURN_ON_FALSE(pressed, ESP_ERR_INVALID_ARG, TAG, "pressed missing");
@@ -544,6 +594,7 @@ esp_err_t audio_board_read_k1(bool *pressed)
     return ESP_OK;
 }
 
+/* Hardware boundary: reads the K2 button state through the TCA9555 expander. */
 esp_err_t audio_board_read_k2(bool *pressed)
 {
     ESP_RETURN_ON_FALSE(pressed, ESP_ERR_INVALID_ARG, TAG, "pressed missing");
@@ -554,6 +605,8 @@ esp_err_t audio_board_read_k2(bool *pressed)
     return ESP_OK;
 }
 
+/* Data ownership helper: frees the heap-backed WAV recording buffer after the
+ * upload task has encoded or abandoned it. */
 void audio_board_release_recording(recorded_audio_t *audio)
 {
     if (audio && audio->wav) {
@@ -562,6 +615,8 @@ void audio_board_release_recording(recorded_audio_t *audio)
     }
 }
 
+/* Hardware access helper: exposes the speaker codec handle to playback code that
+ * needs lower-level codec access. */
 esp_codec_dev_handle_t audio_board_speaker_codec(void)
 {
     return speaker_codec;

@@ -20,6 +20,8 @@ static const char *TAG = "wifi";
 static EventGroupHandle_t wifi_events;
 static int retry_count;
 
+/* Network hardware boundary: reacts to ESP Wi-Fi/IP events, reconnects the STA
+ * interface, and signals whether the device is online. */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id,
                                void *event_data)
 {
@@ -37,6 +39,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
+/* Network hardware boundary: initializes NVS, the ESP network stack, and Wi-Fi
+ * station mode, then blocks until the speaker has internet connectivity. */
 esp_err_t wifi_service_start(void)
 {
     esp_err_t nvs_err = nvs_flash_init();

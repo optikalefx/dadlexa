@@ -14,6 +14,8 @@ static const esp_wn_iface_t *wake_net;
 static model_iface_data_t *wake_data;
 static int chunk_samples;
 
+/* Wake-word model boundary: loads the ESP-SR model, creates the detector, and
+ * verifies its sample rate matches the microphone recording path. */
 esp_err_t wake_word_init(void)
 {
     srmodel_list_t *models = esp_srmodel_init("model");
@@ -35,6 +37,8 @@ esp_err_t wake_word_init(void)
     return ESP_OK;
 }
 
+/* Business-critical hardware/model loop: repeatedly reads microphone audio via
+ * audio_board and returns only when the wake-word detector fires. */
 esp_err_t wake_word_wait(void)
 {
     ESP_RETURN_ON_FALSE(wake_net && wake_data && chunk_samples > 0, ESP_ERR_INVALID_STATE, TAG,

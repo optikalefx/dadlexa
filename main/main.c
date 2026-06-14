@@ -8,6 +8,8 @@
 
 static const char *TAG = "app";
 
+/* Business-critical orchestrator: boots hardware/network services, announces
+ * Telegram availability, then loops forever waiting for wake-word events. */
 void app_main(void)
 {
     ESP_ERROR_CHECK(led_ring_init());

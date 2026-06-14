@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_vad.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -26,6 +27,8 @@
 #define KEY1_BIT 1
 #define KEY2_BIT 2
 #define WAV_HEADER_BYTES 44
+#define RECORD_VAD_FRAME_MS 20
+#define RECORD_VAD_FRAME_SAMPLES (RECORD_SAMPLE_RATE * RECORD_VAD_FRAME_MS / 1000)
 
 static const char *TAG = "audio_board";
 
@@ -371,22 +374,13 @@ esp_err_t audio_board_read_mono_gain(int16_t *buffer, size_t samples, float gain
     return err;
 }
 
-static uint32_t calculate_rms(const int16_t *samples, size_t count)
-{
-    if (count == 0) {
-        return 0;
-    }
-    double sum = 0;
-    for (size_t i = 0; i < count; i++) {
-        sum += (double)samples[i] * (double)samples[i];
-    }
-    return (uint32_t)sqrt(sum / count);
-}
-
 esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
 {
     memset(audio, 0, sizeof(*audio));
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "record mode");
+
+    vad_handle_t vad = vad_create(VAD_MODE_1);
+    ESP_RETURN_ON_FALSE(vad, ESP_ERR_NO_MEM, TAG, "vad create");
 
     size_t max_samples = RECORD_SAMPLE_RATE * MAX_RECORD_SECONDS;
     size_t max_data_bytes = max_samples * sizeof(int16_t);
@@ -394,7 +388,10 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
     if (!wav) {
         wav = malloc(WAV_HEADER_BYTES + max_data_bytes);
     }
-    ESP_RETURN_ON_FALSE(wav, ESP_ERR_NO_MEM, TAG, "wav alloc");
+    if (!wav) {
+        vad_destroy(vad);
+        return ESP_ERR_NO_MEM;
+    }
 
     size_t preroll_samples = (RECORD_SAMPLE_RATE * AUDIO_PREROLL_MS) / 1000;
     int16_t *preroll = heap_caps_malloc(preroll_samples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -402,51 +399,37 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
         preroll = malloc(preroll_samples * sizeof(int16_t));
     }
     if (!preroll) {
+        vad_destroy(vad);
         free(wav);
         return ESP_ERR_NO_MEM;
     }
 
-    int16_t read_mono[AUDIO_READ_BUFFER_BYTES / (sizeof(int16_t) * 2)];
+    int16_t read_mono[RECORD_VAD_FRAME_SAMPLES];
     int16_t *samples = (int16_t *)(wav + WAV_HEADER_BYTES);
     size_t written = 0;
     size_t preroll_write = 0;
     size_t preroll_count = 0;
     uint32_t silence_ms = 0;
     bool heard_voice = false;
-    uint8_t voice_confirm = 0;
     double sum_squares = 0;
-    uint32_t noise_floor = UINT32_MAX;
-    uint32_t start_threshold = VOICE_START_RMS_THRESHOLD;
-    uint32_t silence_threshold = SILENCE_RMS_THRESHOLD;
     int64_t wait_start = esp_timer_get_time();
+    esp_err_t err = ESP_OK;
 
     while (written < max_samples) {
         size_t chunk_samples = sizeof(read_mono) / sizeof(read_mono[0]);
         int64_t read_start = esp_timer_get_time();
-        ESP_RETURN_ON_ERROR(audio_board_read_mono_gain(read_mono, chunk_samples, 1.0f), TAG,
-                            "record read");
+        err = audio_board_read_mono_gain(read_mono, chunk_samples, 1.0f);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "record read failed: %s", esp_err_to_name(err));
+            goto cleanup;
+        }
         uint32_t chunk_ms = (uint32_t)((esp_timer_get_time() - read_start) / 1000);
         if (chunk_ms < 1) {
             chunk_ms = (uint32_t)(chunk_samples * 1000 / RECORD_SAMPLE_RATE);
         }
+        vad_state_t vad_state = vad_process(vad, read_mono, RECORD_SAMPLE_RATE, RECORD_VAD_FRAME_MS);
 
-        uint32_t chunk_rms = calculate_rms(read_mono, chunk_samples);
         if (!heard_voice) {
-            if (chunk_rms < noise_floor) {
-                noise_floor = chunk_rms;
-                start_threshold = noise_floor + VOICE_START_RMS_MARGIN;
-                if (start_threshold < VOICE_START_RMS_THRESHOLD) {
-                    start_threshold = VOICE_START_RMS_THRESHOLD;
-                }
-                silence_threshold = noise_floor + SILENCE_RMS_MARGIN;
-                if (silence_threshold < SILENCE_RMS_THRESHOLD) {
-                    silence_threshold = SILENCE_RMS_THRESHOLD;
-                }
-                uint32_t max_silence_threshold = start_threshold > 25 ? start_threshold - 25 : start_threshold;
-                if (silence_threshold > max_silence_threshold) {
-                    silence_threshold = max_silence_threshold;
-                }
-            }
             for (size_t i = 0; i < chunk_samples; i++) {
                 preroll[preroll_write] = read_mono[i];
                 preroll_write = (preroll_write + 1) % preroll_samples;
@@ -454,17 +437,18 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
                     preroll_count++;
                 }
             }
-            if (chunk_rms >= start_threshold) {
-                voice_confirm++;
-                if (voice_confirm >= VOICE_START_CONFIRM_CHUNKS) {
-                    heard_voice = true;
-                    size_t start = preroll_count == preroll_samples ? preroll_write : 0;
-                    for (size_t i = 0; i < preroll_count && written < max_samples; i++) {
-                        samples[written++] = preroll[(start + i) % preroll_samples];
+            if (vad_state == VAD_SPEECH) {
+                heard_voice = true;
+                size_t start = preroll_count == preroll_samples ? preroll_write : 0;
+                for (size_t i = 0; i < preroll_count && written < max_samples; i++) {
+                    int16_t sample = preroll[(start + i) % preroll_samples];
+                    samples[written++] = sample;
+                    int16_t mag = sample == INT16_MIN ? INT16_MAX : abs(sample);
+                    if (mag > audio->peak) {
+                        audio->peak = mag;
                     }
+                    sum_squares += (double)sample * (double)sample;
                 }
-            } else {
-                voice_confirm = 0;
             }
             if (!heard_voice && (esp_timer_get_time() - wait_start) / 1000 >= VOICE_WAIT_TIMEOUT_MS) {
                 break;
@@ -483,7 +467,7 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
         }
 
         uint32_t recorded_ms = (uint32_t)(written * 1000 / RECORD_SAMPLE_RATE);
-        if (recorded_ms >= MIN_RECORD_MS && chunk_rms < silence_threshold) {
+        if (recorded_ms >= MIN_RECORD_MS && vad_state == VAD_SILENCE) {
             silence_ms += chunk_ms;
             if (silence_ms >= SILENCE_STOP_MS) {
                 break;
@@ -493,7 +477,13 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
         }
     }
 
+cleanup:
+    vad_destroy(vad);
     free(preroll);
+    if (err != ESP_OK) {
+        free(wav);
+        return err;
+    }
     if (written == 0) {
         free(wav);
         return ESP_ERR_TIMEOUT;

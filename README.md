@@ -1,4 +1,4 @@
-# Jacob Smart Speaker
+# Dadlexa
 
 Native ESP-IDF firmware for the Waveshare ESP32-S3 smart speaker board.
 

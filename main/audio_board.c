@@ -294,7 +294,6 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
     if (current_sample_rate == sample_rate) {
         return ESP_OK;
     }
-    bool codecs_were_open = speaker_open || mic_open;
     if (speaker_open) {
         esp_codec_dev_close(speaker_codec);
         speaker_open = false;
@@ -302,9 +301,6 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
     if (mic_open) {
         esp_codec_dev_close(mic_codec);
         mic_open = false;
-    }
-    if (codecs_were_open) {
-        i2s_channels_enabled = false;
     }
 
     if (i2s_channels_enabled) {

@@ -12,6 +12,7 @@ idf_component_register(
         "voice_commands.c"
         "voice_flow.c"
         "wake_word.c"
+        "web_admin.c"
         "wifi_service.c"
     INCLUDE_DIRS "." ".."
     REQUIRES
@@ -20,6 +21,7 @@ idf_component_register(
         esp_audio_codec
         esp_codec_dev
         esp_http_client
+        esp_http_server
         esp_timer
         esp_wifi
         fatfs

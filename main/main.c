@@ -4,6 +4,7 @@
 #include "telegram_service.h"
 #include "voice_flow.h"
 #include "wake_word.h"
+#include "web_admin.h"
 #include "wifi_service.h"
 
 static const char *TAG = "app";
@@ -16,6 +17,7 @@ void app_main(void)
     ESP_ERROR_CHECK(led_ring_clear());
     ESP_ERROR_CHECK(wifi_service_start());
     ESP_LOGI(TAG, "wifi connected");
+    ESP_ERROR_CHECK(web_admin_start());
 
     if (telegram_send_message("online") != ESP_OK) {
         ESP_LOGW(TAG, "online Telegram message failed");

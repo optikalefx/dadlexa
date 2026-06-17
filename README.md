@@ -1,4 +1,4 @@
-# Dadlexa
+# Jacob Smart Speaker
 
 Native ESP-IDF firmware for the Waveshare ESP32-S3 smart speaker board.
 
@@ -61,13 +61,65 @@ Create `arduino_secrets.h` locally. It is ignored by git.
 This app uses ESP-IDF plus ESP-SR from ESP-ADF. The local ESP-ADF checkout is ignored at `idf-tests/.esp-adf/`.
 
 ```sh
-export ADF_PATH=~/arduino/dadlexa/idf-tests/.esp-adf
-. ~/.platformio/packages/framework-espidf/export.sh
-python ~/.platformio/packages/framework-espidf/tools/idf.py -B build-native-app-2 build
+export ADF_PATH=/Users/sean/arduino/jacob-smart-speaker/idf-tests/.esp-adf
+. /Users/sean/.platformio/packages/framework-espidf/export.sh
+python /Users/sean/.platformio/packages/framework-espidf/tools/idf.py -B build-native-app-2 build
 ```
 
 Flash command from the current working setup:
 
 ```sh
-~/.espressif/python_env/idf5.5_py3.14_env/bin/python -m esptool --chip esp32s3 -p /dev/cu.usbmodem2101 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0x0 build-native-app-2/bootloader/bootloader.bin 0x8000 build-native-app-2/partition_table/partition-table.bin 0xe000 build-native-app-2/ota_data_initial.bin 0x10000 build-native-app-2/dadlexa.bin 0x310000 build-native-app-2/srmodels/srmodels.bin
+cd /Users/sean/arduino/jacob-smart-speaker
+export ADF_PATH=/Users/sean/arduino/jacob-smart-speaker/idf-tests/.esp-adf
+source /Users/sean/.platformio/packages/framework-espidf/export.sh
+/Users/sean/.espressif/python_env/idf5.5_py3.14_env/bin/python /Users/sean/.platformio/packages/framework-espidf/tools/idf.py -p /dev/cu.usbmodem2101 flash
 ```
+
+Monitor
+```sh
+export ADF_PATH=/Users/sean/arduino/jacob-smart-speaker/idf-tests/.esp-adf && source /Users/sean/.platformio/packages/framework-espidf/export.sh && /Users/sean/.espressif/python_env/idf5.5_py3.14_env/bin/python /Users/sean/.platformio/packages/framework-espidf/tools/idf.py -p /dev/cu.usbmodem2101 monitor
+```
+
+
+TODO
+
+Yes. The cleanest approach is to run a small HTTP server on the ESP32 when it is on Wi-Fi.
+A practical design:
+Add a local web page on the device
+Visit something like http://jacob-speaker.local/ or the device IP.
+Page shows current manifest.txt entries and files in /sdcard/songs.
+
+Upload MP3 files over HTTP
+Browser form uploads milkshake.mp3.
+ESP32 streams the upload directly to /sdcard/songs/milkshake.mp3.
+Avoid buffering the whole MP3 in RAM.
+
+Edit or append manifest entries
+A form with:phrase: play milkshake
+filename: milkshake.mp3
+
+ESP32 rewrites /sdcard/manifest.txt safely.
+
+Reload commands
+After manifest update, firmware reloads the SD music library and rebuilds MultiNet commands.
+Or simpler: show “restart required” and reboot the device after upload/edit.
+
+Important details:
+Add simple auth. At minimum, a password in arduino_secrets.h.
+Use temporary files for safe writes:upload to /sdcard/songs/.upload.tmp
+rename to final filename after success
+write manifest to /sdcard/manifest.tmp
+rename over manifest.txt
+
+Validate filenames: allow only letters, numbers, spaces, _, -, and .mp3.
+Keep exact matching behavior: manifest value should equal the filename.
+I’d probably implement this as:
+web_admin.c/h
+routes:GET / admin page
+GET /api/songs
+GET /api/manifest
+POST /api/upload
+POST /api/manifest
+POST /api/reload or POST /api/reboot
+
+The one caveat: reloading MultiNet commands live may be trickier than rebooting because the current code initializes commands once. The simplest robust version is: upload song + update manifest + reboot. On boot, it picks up the new manifest.

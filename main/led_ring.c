@@ -3,6 +3,7 @@
 #include "app_config.h"
 #include "esp_check.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "led_strip.h"
 #include "led_strip_rmt.h"
@@ -11,6 +12,7 @@
 
 static const char *TAG = "led_ring";
 static led_strip_handle_t led_strip;
+static SemaphoreHandle_t led_mutex;
 static uint8_t chase_index;
 
 /* Data preparation helper: applies the configured brightness limit before RGB
@@ -30,12 +32,28 @@ static esp_err_t show(void)
     return led_strip_refresh(led_strip);
 }
 
+static esp_err_t lock_leds(void)
+{
+    ESP_RETURN_ON_FALSE(led_mutex, ESP_ERR_INVALID_STATE, TAG, "mutex not initialized");
+    xSemaphoreTake(led_mutex, portMAX_DELAY);
+    return ESP_OK;
+}
+
+static void unlock_leds(void)
+{
+    xSemaphoreGive(led_mutex);
+}
+
 /* LED hardware boundary: creates the RMT LED-strip device attached to the
  * configured LED GPIO and leaves the ring cleared. */
 esp_err_t led_ring_init(void)
 {
     if (led_strip) {
         return ESP_OK;
+    }
+    if (!led_mutex) {
+        led_mutex = xSemaphoreCreateMutex();
+        ESP_RETURN_ON_FALSE(led_mutex, ESP_ERR_NO_MEM, TAG, "mutex");
     }
 
     led_strip_config_t strip_config = {
@@ -58,10 +76,17 @@ esp_err_t led_ring_init(void)
 esp_err_t led_ring_clear(void)
 {
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
+    ESP_RETURN_ON_ERROR(lock_leds(), TAG, "lock");
     for (int led = 0; led < LED_COUNT; led++) {
-        ESP_RETURN_ON_ERROR(led_strip_set_pixel(led_strip, led, 0, 0, 0), TAG, "clear pixel");
+        esp_err_t err = led_strip_set_pixel(led_strip, led, 0, 0, 0);
+        if (err != ESP_OK) {
+            unlock_leds();
+            ESP_RETURN_ON_ERROR(err, TAG, "clear pixel");
+        }
     }
-    return show();
+    esp_err_t err = show();
+    unlock_leds();
+    return err;
 }
 
 /* LED hardware boundary: fills the entire physical ring with one scaled color
@@ -71,11 +96,17 @@ esp_err_t led_ring_set(uint8_t red, uint8_t green, uint8_t blue)
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
     scale_color(&red, &green, &blue);
 
+    ESP_RETURN_ON_ERROR(lock_leds(), TAG, "lock");
     for (int led = 0; led < LED_COUNT; led++) {
-        ESP_RETURN_ON_ERROR(led_strip_set_pixel(led_strip, led, red, green, blue), TAG,
-                            "set pixel");
+        esp_err_t err = led_strip_set_pixel(led_strip, led, red, green, blue);
+        if (err != ESP_OK) {
+            unlock_leds();
+            ESP_RETURN_ON_ERROR(err, TAG, "set pixel");
+        }
     }
-    return show();
+    esp_err_t err = show();
+    unlock_leds();
+    return err;
 }
 
 /* LED hardware boundary: blocks while blinking the physical ring as a short
@@ -101,11 +132,21 @@ esp_err_t led_ring_chase_step(uint8_t red, uint8_t green, uint8_t blue)
     ESP_RETURN_ON_FALSE(led_strip, ESP_ERR_INVALID_STATE, TAG, "not initialized");
     scale_color(&red, &green, &blue);
 
+    ESP_RETURN_ON_ERROR(lock_leds(), TAG, "lock");
     for (int led = 0; led < LED_COUNT; led++) {
-        ESP_RETURN_ON_ERROR(led_strip_set_pixel(led_strip, led, 0, 0, 0), TAG, "clear pixel");
+        esp_err_t err = led_strip_set_pixel(led_strip, led, 0, 0, 0);
+        if (err != ESP_OK) {
+            unlock_leds();
+            ESP_RETURN_ON_ERROR(err, TAG, "clear pixel");
+        }
     }
-    ESP_RETURN_ON_ERROR(led_strip_set_pixel(led_strip, chase_index, red, green, blue), TAG,
-                        "set chase pixel");
+    esp_err_t err = led_strip_set_pixel(led_strip, chase_index, red, green, blue);
+    if (err != ESP_OK) {
+        unlock_leds();
+        ESP_RETURN_ON_ERROR(err, TAG, "set chase pixel");
+    }
     chase_index = (uint8_t)((chase_index + 1) % LED_COUNT);
-    return show();
+    err = show();
+    unlock_leds();
+    return err;
 }

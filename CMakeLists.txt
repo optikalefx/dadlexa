@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(EXTRA_COMPONENT_DIRS
+    "$ENV{ADF_PATH}/components/esp-adf-libs/esp_audio_codec"
     "$ENV{ADF_PATH}/components/esp-sr"
 )
 

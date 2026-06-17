@@ -5,8 +5,11 @@ idf_component_register(
         "audio_board.c"
         "led_ring.c"
         "micro_opus_player.cpp"
+        "mp3_file_player.c"
         "ogg_opus_encoder.c"
+        "sd_music_library.c"
         "telegram_service.c"
+        "voice_commands.c"
         "voice_flow.c"
         "wake_word.c"
         "wifi_service.c"
@@ -14,12 +17,15 @@ idf_component_register(
     REQUIRES
         driver
         esp-sr
+        esp_audio_codec
         esp_codec_dev
         esp_http_client
         esp_timer
         esp_wifi
+        fatfs
         json
         mbedtls
         nvs_flash
+        sdmmc
         esphome__micro-opus
 )

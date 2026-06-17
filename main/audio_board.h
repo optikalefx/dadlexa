@@ -20,14 +20,21 @@ typedef struct {
     int16_t peak;
 } recorded_audio_t;
 
+typedef esp_err_t (*audio_board_record_chunk_cb_t)(const int16_t *samples, size_t sample_count,
+                                                   void *ctx);
+
 esp_err_t audio_board_init(void);
 void audio_board_lock(void);
 void audio_board_unlock(void);
 esp_err_t audio_board_prepare_recording(void);
+esp_err_t audio_board_prepare_playback(int sample_rate, int channels);
 esp_err_t audio_board_prepare_playback_48k(void);
 esp_err_t audio_board_read_stereo(int16_t *buffer, size_t frames, uint32_t timeout_ms);
 esp_err_t audio_board_read_mono_gain(int16_t *buffer, size_t samples, float gain);
 esp_err_t audio_board_record_until_silence(recorded_audio_t *audio);
+esp_err_t audio_board_record_until_silence_with_callback(recorded_audio_t *audio,
+                                                         audio_board_record_chunk_cb_t cb,
+                                                         void *ctx);
 esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms);
 esp_err_t audio_board_write_pcm(const int16_t *pcm, size_t samples);
 esp_err_t audio_board_read_k1(bool *pressed);

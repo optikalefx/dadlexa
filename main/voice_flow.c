@@ -13,9 +13,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "led_ring.h"
+#include "mp3_file_player.h"
 #include "micro_opus_player.h"
 #include "ogg_opus_encoder.h"
+#include "sd_music_library.h"
 #include "telegram_service.h"
+#include "voice_commands.h"
 
 static const char *TAG = "voice_flow";
 
@@ -46,6 +49,7 @@ static size_t last_reply_ogg_size;
 static uint8_t *last_sent_ogg;
 static size_t last_sent_ogg_size;
 static bool button_task_started;
+static bool music_commands_attempted;
 
 /* Coordination helper: lazily creates the mutex protecting cached Telegram reply
  * and sent-audio buffers. */
@@ -204,7 +208,12 @@ static void button_task(void *arg)
         if (k1_err == ESP_OK && k1_pressed && !k1_was_pressed &&
             now - k1_last_press_us >= (int64_t)BUTTON_DEBOUNCE_MS * 1000) {
             k1_last_press_us = now;
-            play_last_reply_from_ram();
+            if (mp3_file_player_is_playing()) {
+                ESP_LOGI(TAG, "K1 stopping song playback");
+                mp3_file_player_request_stop();
+            } else {
+                play_last_reply_from_ram();
+            }
         } else if (k1_err != ESP_OK) {
             ESP_LOGW(TAG, "K1 read failed: %s", esp_err_to_name(k1_err));
         }
@@ -301,28 +310,76 @@ static void upload_and_poll_task(void *arg)
     vTaskDelete(NULL);
 }
 
+static void ensure_music_commands_ready(void)
+{
+    if (voice_commands_ready() || music_commands_attempted) {
+        return;
+    }
+
+    music_commands_attempted = true;
+    esp_err_t music_err = sd_music_library_init();
+    if (music_err != ESP_OK) {
+        ESP_LOGW(TAG, "SD music unavailable: %s", esp_err_to_name(music_err));
+        return;
+    }
+
+    esp_err_t commands_err = voice_commands_init();
+    if (commands_err != ESP_OK) {
+        ESP_LOGW(TAG, "voice commands unavailable: %s", esp_err_to_name(commands_err));
+    }
+}
+
 /* Business-critical voice workflow: after wake-word detection, gives audible/LED
  * cues, records speech from the microphone, and starts the Telegram upload/reply
  * task if recording succeeded. */
 void voice_flow_handle_wake(void)
 {
     recorded_audio_t audio = {0};
+    int command_id = 0;
 
     audio_board_lock();
     led_ring_set(0, 255, 0);
     audio_board_play_tone(WAKE_TONE_HZ, WAKE_TONE_MS);
+    audio_board_unlock();
+
+    ensure_music_commands_ready();
+
+    audio_board_lock();
     esp_err_t err = audio_board_record_until_silence(&audio);
     led_ring_set(0, 0, 255);
     audio_board_play_tone(DONE_TONE_HZ, DONE_TONE_MS);
     audio_board_unlock();
-
-    vTaskDelay(pdMS_TO_TICKS(500));
 
     if (err != ESP_OK || !audio.ok) {
         ESP_LOGW(TAG, "recording failed: %s", esp_err_to_name(err));
         led_ring_clear();
         telegram_send_message("Voice recording failed.");
         return;
+    }
+
+    esp_err_t command_err = voice_commands_ready()
+                                ? voice_commands_detect_recording(&audio, &command_id)
+                                : ESP_ERR_INVALID_STATE;
+    if (command_err == ESP_OK && command_id > 0) {
+        const sd_song_entry_t *entry = sd_music_library_find_command(command_id);
+        if (!entry) {
+            ESP_LOGW(TAG, "recognized unknown command id %d", command_id);
+            led_ring_flash(255, 0, 0, 80, 40, 1);
+            audio_board_release_recording(&audio);
+            return;
+        }
+
+        audio_board_release_recording(&audio);
+        led_ring_set(255, 180, 0);
+        esp_err_t play_err = mp3_file_player_play(entry->song_path);
+        ESP_LOGI(TAG, "song playback %s: %s", entry->song_path,
+                 play_err == ESP_OK ? "ok" : esp_err_to_name(play_err));
+        led_ring_clear();
+        return;
+    }
+    if (command_err != ESP_ERR_INVALID_STATE && command_err != ESP_ERR_TIMEOUT &&
+        command_err != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "command listen failed: %s", esp_err_to_name(command_err));
     }
 
     upload_job_t *job = calloc(1, sizeof(upload_job_t));

@@ -360,12 +360,22 @@ esp_err_t audio_board_prepare_recording(void)
     return open_mic(RECORD_SAMPLE_RATE);
 }
 
+/* Hardware boundary: switches the speaker path to the decoded media sample
+ * rate/channel layout while leaving writes serialized by the audio mutex. */
+esp_err_t audio_board_prepare_playback(int sample_rate, int channels)
+{
+    ESP_RETURN_ON_FALSE(sample_rate > 0, ESP_ERR_INVALID_ARG, TAG, "invalid playback rate");
+    ESP_RETURN_ON_FALSE(channels == 1 || channels == 2, ESP_ERR_INVALID_ARG, TAG,
+                        "invalid playback channels");
+    ESP_RETURN_ON_ERROR(reconfig_i2s_clock(sample_rate), TAG, "playback clock");
+    return open_speaker(sample_rate, channels);
+}
+
 /* Hardware boundary: switches the speaker path to 48 kHz mono playback for
  * decoded Telegram replies and cached outgoing audio. */
 esp_err_t audio_board_prepare_playback_48k(void)
 {
-    ESP_RETURN_ON_ERROR(reconfig_i2s_clock(PLAYBACK_SAMPLE_RATE), TAG, "48k clock");
-    return open_speaker(PLAYBACK_SAMPLE_RATE, 1);
+    return audio_board_prepare_playback(PLAYBACK_SAMPLE_RATE, 1);
 }
 
 /* Hardware boundary: pulls interleaved stereo PCM frames directly from the
@@ -415,7 +425,9 @@ esp_err_t audio_board_read_mono_gain(int16_t *buffer, size_t samples, float gain
 /* Business-critical hardware workflow: records microphone audio until VAD sees
  * speech followed by silence, keeps preroll, and returns a WAV buffer plus
  * metrics for later Telegram upload. */
-esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
+esp_err_t audio_board_record_until_silence_with_callback(recorded_audio_t *audio,
+                                                         audio_board_record_chunk_cb_t cb,
+                                                         void *ctx)
 {
     memset(audio, 0, sizeof(*audio));
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "record mode");
@@ -463,6 +475,13 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "record read failed: %s", esp_err_to_name(err));
             goto cleanup;
+        }
+        if (cb) {
+            err = cb(read_mono, chunk_samples, ctx);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "record callback failed: %s", esp_err_to_name(err));
+                goto cleanup;
+            }
         }
         uint32_t chunk_ms = (uint32_t)((esp_timer_get_time() - read_start) / 1000);
         if (chunk_ms < 1) {
@@ -538,6 +557,11 @@ cleanup:
     audio->duration_ms = (uint32_t)(written * 1000 / RECORD_SAMPLE_RATE);
     audio->rms = (uint32_t)sqrt(sum_squares / written);
     return ESP_OK;
+}
+
+esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
+{
+    return audio_board_record_until_silence_with_callback(audio, NULL, NULL);
 }
 
 /* Hardware boundary: generates a sine wave and writes it to the speaker codec

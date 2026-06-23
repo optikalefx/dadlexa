@@ -23,9 +23,9 @@
 static const char *TAG = "voice_flow";
 
 #define WAKE_TONE_HZ 880
-#define WAKE_TONE_MS 120
+#define WAKE_TONE_MS 220
 #define DONE_TONE_HZ 440
-#define DONE_TONE_MS 180
+#define DONE_TONE_MS 260
 #define CHASE_STEP_MS 140
 #define BUTTON_POLL_MS 50
 #define BUTTON_DEBOUNCE_MS 250
@@ -50,6 +50,13 @@ static uint8_t *last_sent_ogg;
 static size_t last_sent_ogg_size;
 static bool button_task_started;
 static bool music_commands_attempted;
+
+static void enter_audio_idle_locked(void)
+{
+    audio_board_lock();
+    audio_board_enter_idle();
+    audio_board_unlock();
+}
 
 /* Coordination helper: lazily creates the mutex protecting cached Telegram reply
  * and sent-audio buffers. */
@@ -150,7 +157,7 @@ static esp_err_t play_last_reply_from_ram(void)
         err = play_micro_opus_ogg(last_reply_ogg, last_reply_ogg_size);
         ESP_LOGI(TAG, "cached reply playback %s", err == ESP_OK ? "ok" : "failed");
     }
-    audio_board_prepare_recording();
+    audio_board_enter_idle();
     audio_board_unlock();
 
     xSemaphoreGive(audio_cache_mutex);
@@ -179,7 +186,7 @@ static esp_err_t play_last_sent_from_ram(void)
                                             SENT_PLAYBACK_GAIN);
         ESP_LOGI(TAG, "cached sent playback %s", err == ESP_OK ? "ok" : "failed");
     }
-    audio_board_prepare_recording();
+    audio_board_enter_idle();
     audio_board_unlock();
 
     xSemaphoreGive(audio_cache_mutex);
@@ -275,6 +282,7 @@ static void upload_and_poll_task(void *arg)
     if (sent != ESP_OK) {
         ESP_LOGW(TAG, "audio upload failed");
         led_ring_clear();
+        enter_audio_idle_locked();
         free(job);
         vTaskDelete(NULL);
     }
@@ -306,6 +314,7 @@ static void upload_and_poll_task(void *arg)
 
     stop_chase(&chase);
     led_ring_clear();
+    enter_audio_idle_locked();
     free(job);
     vTaskDelete(NULL);
 }
@@ -353,6 +362,7 @@ void voice_flow_handle_wake(void)
     if (err != ESP_OK || !audio.ok) {
         ESP_LOGW(TAG, "recording failed: %s", esp_err_to_name(err));
         led_ring_clear();
+        enter_audio_idle_locked();
         telegram_send_message("Voice recording failed.");
         return;
     }
@@ -366,6 +376,7 @@ void voice_flow_handle_wake(void)
             ESP_LOGW(TAG, "recognized unknown command id %d", command_id);
             led_ring_flash(255, 0, 0, 80, 40, 1);
             audio_board_release_recording(&audio);
+            enter_audio_idle_locked();
             return;
         }
 
@@ -385,6 +396,7 @@ void voice_flow_handle_wake(void)
     upload_job_t *job = calloc(1, sizeof(upload_job_t));
     if (!job) {
         audio_board_release_recording(&audio);
+        enter_audio_idle_locked();
         return;
     }
     job->audio = audio;
@@ -394,5 +406,6 @@ void voice_flow_handle_wake(void)
         pdPASS) {
         audio_board_release_recording(&job->audio);
         free(job);
+        enter_audio_idle_locked();
     }
 }

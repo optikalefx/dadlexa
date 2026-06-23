@@ -49,7 +49,7 @@ static esp_err_t locked_write_pcm(const int16_t *samples, size_t sample_count)
 static void locked_prepare_recording(void)
 {
     audio_board_lock();
-    audio_board_prepare_recording();
+    audio_board_enter_idle();
     audio_board_unlock();
 }
 

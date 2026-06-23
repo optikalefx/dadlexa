@@ -27,6 +27,7 @@ esp_err_t audio_board_init(void);
 void audio_board_lock(void);
 void audio_board_unlock(void);
 esp_err_t audio_board_prepare_recording(void);
+esp_err_t audio_board_enter_idle(void);
 esp_err_t audio_board_prepare_playback(int sample_rate, int channels);
 esp_err_t audio_board_prepare_playback_48k(void);
 esp_err_t audio_board_read_stereo(int16_t *buffer, size_t frames, uint32_t timeout_ms);

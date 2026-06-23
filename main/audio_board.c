@@ -42,6 +42,8 @@ static int current_sample_rate;
 static bool i2s_channels_enabled;
 static bool speaker_open;
 static bool mic_open;
+static bool speaker_output_active;
+static bool speaker_output_state_known;
 static SemaphoreHandle_t audio_mutex;
 
 /* Data preparation helper: writes a 16-bit integer in WAV little-endian order;
@@ -97,7 +99,7 @@ static esp_err_t tca_write(uint8_t reg, uint8_t value)
 
 /* Hardware boundary: configures and drives the expander pin that enables the
  * speaker power amplifier. */
-static esp_err_t enable_speaker_amp(void)
+static esp_err_t set_speaker_amp_enabled(bool enabled)
 {
     uint8_t config = 0xff;
     ESP_RETURN_ON_ERROR(tca_read(TCA9555_CONFIG_PORT_1, &config), TAG, "tca config read");
@@ -106,8 +108,34 @@ static esp_err_t enable_speaker_amp(void)
 
     uint8_t output = 0;
     ESP_RETURN_ON_ERROR(tca_read(TCA9555_OUTPUT_PORT_1, &output), TAG, "tca output read");
-    output |= (1U << SPEAKER_PA_BIT);
+    if (enabled) {
+        output |= (1U << SPEAKER_PA_BIT);
+    } else {
+        output &= ~(1U << SPEAKER_PA_BIT);
+    }
     return tca_write(TCA9555_OUTPUT_PORT_1, output);
+}
+
+/* Hardware boundary: coordinates codec mute and amplifier power so the speaker
+ * path is electrically quiet while the microphone remains available. */
+static esp_err_t set_speaker_output_active(bool active)
+{
+    ESP_RETURN_ON_FALSE(speaker_open, ESP_ERR_INVALID_STATE, TAG, "speaker closed");
+    if (speaker_output_state_known && speaker_output_active == active) {
+        return ESP_OK;
+    }
+    if (active) {
+        ESP_RETURN_ON_ERROR(set_speaker_amp_enabled(true), TAG, "speaker amp on");
+        ESP_RETURN_ON_FALSE(esp_codec_dev_set_out_mute(speaker_codec, false) == ESP_CODEC_DEV_OK,
+                            ESP_FAIL, TAG, "speaker unmute");
+    } else {
+        ESP_RETURN_ON_FALSE(esp_codec_dev_set_out_mute(speaker_codec, true) == ESP_CODEC_DEV_OK,
+                            ESP_FAIL, TAG, "speaker mute");
+        ESP_RETURN_ON_ERROR(set_speaker_amp_enabled(false), TAG, "speaker amp off");
+    }
+    speaker_output_active = active;
+    speaker_output_state_known = true;
+    return ESP_OK;
 }
 
 /* Hardware boundary: creates the ESP-IDF I2C master bus and attaches the board's
@@ -217,7 +245,7 @@ static esp_err_t create_codecs(void)
     };
     speaker_codec = esp_codec_dev_new(&speaker_dev);
     ESP_RETURN_ON_FALSE(speaker_codec, ESP_FAIL, TAG, "speaker dev");
-    ESP_RETURN_ON_ERROR(enable_speaker_amp(), TAG, "speaker amp");
+    ESP_RETURN_ON_ERROR(set_speaker_amp_enabled(false), TAG, "speaker amp off");
 
     const audio_codec_ctrl_if_t *mic_ctrl = new_i2c_ctrl_if(ES7210_CODEC_DEFAULT_ADDR);
     const audio_codec_data_if_t *mic_data = new_i2s_data_if();
@@ -261,6 +289,7 @@ static esp_err_t open_speaker(int sample_rate, int channels)
     ESP_RETURN_ON_FALSE(esp_codec_dev_set_out_vol(speaker_codec, SPEAKER_VOLUME) == ESP_CODEC_DEV_OK,
                         ESP_FAIL, TAG, "speaker volume");
     speaker_open = true;
+    speaker_output_state_known = false;
     return ESP_OK;
 }
 
@@ -335,7 +364,7 @@ esp_err_t audio_board_init(void)
     ESP_RETURN_ON_ERROR(init_i2c(), TAG, "i2c");
     ESP_RETURN_ON_ERROR(init_i2s(RECORD_SAMPLE_RATE), TAG, "i2s");
     ESP_RETURN_ON_ERROR(create_codecs(), TAG, "codecs");
-    return audio_board_prepare_recording();
+    return audio_board_enter_idle();
 }
 
 /* Hardware coordination helper: serializes access to shared audio hardware so
@@ -357,7 +386,16 @@ esp_err_t audio_board_prepare_recording(void)
 {
     ESP_RETURN_ON_ERROR(reconfig_i2s_clock(RECORD_SAMPLE_RATE), TAG, "16k clock");
     ESP_RETURN_ON_ERROR(open_speaker(RECORD_SAMPLE_RATE, 2), TAG, "16k speaker");
-    return open_mic(RECORD_SAMPLE_RATE);
+    ESP_RETURN_ON_ERROR(open_mic(RECORD_SAMPLE_RATE), TAG, "16k mic");
+    return ESP_OK;
+}
+
+/* Hardware boundary: leaves the microphone ready for wake-word listening while
+ * muting the codec output and powering down the external speaker amplifier. */
+esp_err_t audio_board_enter_idle(void)
+{
+    ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "idle recording");
+    return set_speaker_output_active(false);
 }
 
 /* Hardware boundary: switches the speaker path to the decoded media sample
@@ -368,7 +406,8 @@ esp_err_t audio_board_prepare_playback(int sample_rate, int channels)
     ESP_RETURN_ON_FALSE(channels == 1 || channels == 2, ESP_ERR_INVALID_ARG, TAG,
                         "invalid playback channels");
     ESP_RETURN_ON_ERROR(reconfig_i2s_clock(sample_rate), TAG, "playback clock");
-    return open_speaker(sample_rate, channels);
+    ESP_RETURN_ON_ERROR(open_speaker(sample_rate, channels), TAG, "speaker open");
+    return set_speaker_output_active(true);
 }
 
 /* Hardware boundary: switches the speaker path to 48 kHz mono playback for
@@ -569,10 +608,13 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
 esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms)
 {
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "tone mode");
+    ESP_RETURN_ON_ERROR(set_speaker_output_active(true), TAG, "tone speaker");
+    vTaskDelay(pdMS_TO_TICKS(20));
     int16_t samples[128 * 2];
     uint32_t total_frames = RECORD_SAMPLE_RATE * duration_ms / 1000;
     float phase = 0;
     float step = 2.0f * (float)M_PI * (float)frequency_hz / (float)RECORD_SAMPLE_RATE;
+    esp_err_t result = ESP_OK;
     while (total_frames > 0) {
         uint32_t frames = total_frames > 128 ? 128 : total_frames;
         for (uint32_t i = 0; i < frames; i++) {
@@ -584,12 +626,23 @@ esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms)
                 phase -= 2.0f * (float)M_PI;
             }
         }
-        ESP_RETURN_ON_FALSE(esp_codec_dev_write(speaker_codec, samples,
-                                                frames * 2 * sizeof(int16_t)) == ESP_CODEC_DEV_OK,
-                            ESP_FAIL, TAG, "tone write");
+        if (esp_codec_dev_write(speaker_codec, samples,
+                                frames * 2 * sizeof(int16_t)) != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "tone write failed");
+            result = ESP_FAIL;
+            break;
+        }
         total_frames -= frames;
     }
-    return ESP_OK;
+    vTaskDelay(pdMS_TO_TICKS(duration_ms + 80));
+    memset(samples, 0, sizeof(samples));
+    if (esp_codec_dev_write(speaker_codec, samples, sizeof(samples)) != ESP_CODEC_DEV_OK &&
+        result == ESP_OK) {
+        ESP_LOGE(TAG, "tone silence write failed");
+        result = ESP_FAIL;
+    }
+    vTaskDelay(pdMS_TO_TICKS(30));
+    return result;
 }
 
 /* Hardware boundary: writes caller-provided mono PCM samples to the speaker

@@ -356,7 +356,7 @@ static esp_err_t reconfig_i2s_clock(int sample_rate)
 }
 
 /* Hardware boundary: initializes all audio buses, codecs, amplifier control, and
- * mutex protection, then leaves the board ready to record. */
+ * mutex protection, then enters quiet wake-word listening mode. */
 esp_err_t audio_board_init(void)
 {
     audio_mutex = xSemaphoreCreateMutex();
@@ -381,7 +381,8 @@ void audio_board_unlock(void)
 }
 
 /* Hardware boundary: switches the codecs and I2S bus into 16 kHz microphone
- * recording mode while keeping the speaker available for tones. */
+ * mode. This is used both for active recording and for in-interaction tones; it
+ * deliberately does not mute the speaker path. */
 esp_err_t audio_board_prepare_recording(void)
 {
     ESP_RETURN_ON_ERROR(reconfig_i2s_clock(RECORD_SAMPLE_RATE), TAG, "16k clock");
@@ -391,7 +392,9 @@ esp_err_t audio_board_prepare_recording(void)
 }
 
 /* Hardware boundary: leaves the microphone ready for wake-word listening while
- * muting the codec output and powering down the external speaker amplifier. */
+ * muting the codec output and powering down the external speaker amplifier.
+ * Call this only at true idle boundaries, after interaction playback/commands
+ * have finished. */
 esp_err_t audio_board_enter_idle(void)
 {
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "idle recording");
@@ -603,8 +606,9 @@ esp_err_t audio_board_record_until_silence(recorded_audio_t *audio)
     return audio_board_record_until_silence_with_callback(audio, NULL, NULL);
 }
 
-/* Hardware boundary: generates a sine wave and writes it to the speaker codec
- * for audible wake/done cues. */
+/* Hardware boundary: generates a 16 kHz sine wave and writes it to the speaker
+ * codec for audible wake/done cues. It keeps the speaker path active afterward;
+ * the voice flow returns to idle explicitly when the whole interaction ends. */
 esp_err_t audio_board_play_tone(uint32_t frequency_hz, uint32_t duration_ms)
 {
     ESP_RETURN_ON_ERROR(audio_board_prepare_recording(), TAG, "tone mode");

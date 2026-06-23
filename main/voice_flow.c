@@ -51,6 +51,10 @@ static size_t last_sent_ogg_size;
 static bool button_task_started;
 static bool music_commands_attempted;
 
+/* Audio state helper: "idle" means wake-word listening with the speaker codec
+ * muted and the external amp powered down. It is intentionally used only after
+ * the full interaction is over, not between wake tone, recording, done tone, or
+ * command/reply playback. */
 static void enter_audio_idle_locked(void)
 {
     audio_board_lock();

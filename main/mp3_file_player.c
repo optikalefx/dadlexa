@@ -46,6 +46,9 @@ static esp_err_t locked_write_pcm(const int16_t *samples, size_t sample_count)
     return err;
 }
 
+/* MP3 playback owns the speaker during the song. Once playback stops or
+ * completes, return the board to quiet wake-word listening instead of merely
+ * leaving the codecs in recording mode. */
 static void locked_prepare_recording(void)
 {
     audio_board_lock();
